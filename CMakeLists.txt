@@ -144,11 +144,18 @@ set(SOURCES
   src/rpc_impl/rpc_sm_api.cc
   src/rpc_impl/rpc_sm_helpers.cc
   src/transport_impl/transport.cc
+  src/util/cityhash/city_mod.cc
   src/util/huge_alloc.cc
   src/util/tls_registry.cc)
 
 # Transport-specific. DPDK does not play well with Mellanox OFED.
+MESSAGE(STATUS "Selected transport = ${TRANSPORT}.")
 if(TRANSPORT STREQUAL "dpdk")
+  find_library(DPDK_LIB dpdk)
+  if(NOT DPDK_LIB)
+    message(FATAL_ERROR "dpdk library not found")
+  endif()
+
   add_definitions(-DDPDK=true)
   set(LIBRARIES ${LIBRARIES} dpdk dl)
   set(SOURCES ${SOURCES}
@@ -168,6 +175,11 @@ if(TRANSPORT STREQUAL "dpdk")
   endif()
   include_directories(SYSTEM ${DPDK_INCLUDE_DIR})
 else()
+  find_library(IBVERBS_LIB ibverbs)
+  if(NOT IBVERBS_LIB)
+    message(FATAL_ERROR "ibverbs library not found")
+  endif()
+
   set(LIBRARIES ${LIBRARIES} ibverbs)
   set(SOURCES ${SOURCES}
     src/transport_impl/infiniband/ib_transport.cc
@@ -183,7 +195,6 @@ else()
   endif()
 endif()
 
-MESSAGE(STATUS "Selected transport = ${TRANSPORT}.")
 configure_file(src/config.h.in src/config.h)
 
 # MICA sources

@@ -1,12 +1,21 @@
 #pragma once
 
 #include "common.h"
+#include "transport_impl/eth_common.h"
+#include "util/cityhash/city.h"
 
 namespace erpc {
 
-/// We need a non-zero array size for headroom, even when kHeadroom is zero.
-/// We could use (kHeadroom + 1) bytes, but using (kHeadroom + 2) bytes allows
-/// space for the two-byte UDP checksum.
+// Explanation of the headroom hack:
+//
+// Transports may need different amounts of space for the application-provided
+// network header. This "headroom" space is zero for InfiniBand since the driver
+// internally creates a header, and 42 bytes for UDP (i.e., L2+L3+L4 headers).
+//
+// Since we cannot have a zero-length array in C++, the headroom space is
+// calculated as (kHeadroom + 2) bytes, where kHeadroom is zero for InfiniBand
+// and 40 for UDP. We could have used (kHeadroom + 1) bytes, but (kHeadroom + 2)
+// simplifies things by fitting the entire UDP header.
 static constexpr size_t kHeadroomHackBits = 16;
 
 static constexpr size_t kMsgSizeBits = 24;  ///< Bits for message size
@@ -85,9 +94,41 @@ struct pkthdr_t {
     return ret.str();
   }
 
+  /// Return a hash code of this packet header after resetting modifications
+  /// performed by the network
+  uint32_t hashcode() const {
+    pkthdr_t temp = *this;
+    if (kHeadroom == 40) {
+      auto *ipv4_hdr =
+          reinterpret_cast<ipv4_hdr_t *>(&temp.headroom[0] + sizeof(eth_hdr_t));
+      ipv4_hdr->ttl = 128;
+    }
+    return CityHash32(reinterpret_cast<char *>(&temp), sizeof(pkthdr_t));
+  }
+
   /// Return a pointer to the eRPC header in this packet header
   inline uint8_t *ehdrptr() {
     return reinterpret_cast<uint8_t *>(this) + kHeadroom;
+  }
+
+  /// Get the Ethernet header from this packet header
+  inline eth_hdr_t *get_eth_hdr() {
+    assert(kHeadroom == 40);
+    return reinterpret_cast<eth_hdr_t *>(&this->headroom[0]);
+  }
+
+  /// Get the IPv4 header from this packet header
+  inline ipv4_hdr_t *get_ipv4_hdr() {
+    assert(kHeadroom == 40);
+    return reinterpret_cast<ipv4_hdr_t *>(&this->headroom[0] +
+                                          sizeof(eth_hdr_t));
+  }
+
+  /// Get the UDP header from this packet header
+  inline udp_hdr_t *get_udp_hdr() {
+    assert(kHeadroom == 40);
+    return reinterpret_cast<udp_hdr_t *>(
+        &this->headroom[0] + sizeof(eth_hdr_t) + sizeof(ipv4_hdr_t));
   }
 
   /// Return a const pointer to the eRPC header in this const packet header

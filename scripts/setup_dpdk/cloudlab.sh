@@ -6,7 +6,11 @@ sudo modprobe uio
 sudo modprobe igb_uio
 
 # Bind CloudLab's experimental interface (10.*.*.*) to DPDK
-(cd $(dirname $0); rm ifname; g++ -std=c++11 -o ifname ifname.cc)
+if [ ! -f "$(dirname $0)"/ifname ]; then
+  echo "Error: ifname not found in "$(dirname $0)""
+  exit
+fi
+
 exp_interfaces=`"$(dirname $0)"/ifname 10.`
 echo "Binding interfaces $exp_interfaces to DPDK"
 

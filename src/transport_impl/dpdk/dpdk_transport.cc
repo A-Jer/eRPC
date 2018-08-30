@@ -36,6 +36,17 @@ DpdkTransport::DpdkTransport(uint8_t rpc_id, uint8_t phy_port, size_t numa_node,
     // The first thread to grab the lock initializes DPDK
     eal_lock.lock();
 
+    // Get an available queue on phy_port. This does not require phy_port to
+    // be initialized.
+    rt_assert(used_qp_ids[phy_port].size() < kMaxQueues, "No queues left");
+    for (size_t i = 0; i < kMaxQueues; i++) {
+      if (used_qp_ids[phy_port].count(i) == 0) {
+        qp_id = i;
+        break;
+      }
+    }
+    used_qp_ids[phy_port].insert(qp_id);
+
     if (eal_initialized) {
       LOG_INFO("Rpc %u skipping DPDK initialization, queues ID = %zu.\n",
                rpc_id, qp_id);
@@ -58,16 +69,8 @@ DpdkTransport::DpdkTransport(uint8_t rpc_id, uint8_t phy_port, size_t numa_node,
       setup_phy_port();
     }
 
-    // If we are here, EAL and phy_port are initialized
-    rt_assert(used_qp_ids[phy_port].size() < kMaxQueues, "No queues left");
-    for (size_t i = 0; i < kMaxQueues; i++) {
-      if (used_qp_ids[phy_port].count(i) == 0) {
-        qp_id = i;
-        mempool = mempool_arr[phy_port][qp_id];
-        break;
-      }
-    }
-    used_qp_ids[phy_port].insert(qp_id);
+    // Here, mempools for phy_port have been initialized
+    mempool = mempool_arr[phy_port][qp_id];
 
     eal_lock.unlock();
   }
@@ -76,7 +79,8 @@ DpdkTransport::DpdkTransport(uint8_t rpc_id, uint8_t phy_port, size_t numa_node,
   install_flow_rule();
   init_mem_reg_funcs();
 
-  LOG_WARN("DpdkTransport created for ID %u.\n", rpc_id);
+  LOG_WARN("DpdkTransport created for Rpc ID %u, queues ID %zu\n",
+           rpc_id, qp_id);
 }
 
 void DpdkTransport::setup_phy_port() {
@@ -88,9 +92,15 @@ void DpdkTransport::setup_phy_port() {
 
   // Hint: If dpdk-devbind shows available ports, this can sometimes happen
   // if we numactl-membind the process to a different NUMA node than the NIC's.
-  rt_assert(num_ports > phy_port,
-            "Port " + std::to_string(phy_port) + " (0-based) requested, but "
-            "only " + std::to_string(num_ports) + " DPDK ports available.");
+  if (phy_port >= num_ports) {
+    fprintf(stderr,
+            "Port %u (0-based) requested, but only %u DPDK ports available. If "
+            "you have a DPDK-bound port, ensure that (a) the NIC's NUMA node "
+            "has huge pages, and (b) the process is not pinned "
+            "(e.g., via numactl) to a different NUMA node than the NIC's.\n",
+            phy_port, num_ports);
+    rt_assert(false);
+  }
 
   rte_eth_dev_info dev_info;
   rte_eth_dev_info_get(phy_port, &dev_info);
@@ -136,7 +146,7 @@ void DpdkTransport::setup_phy_port() {
     ret = rte_eth_dev_filter_ctrl(phy_port, RTE_ETH_FILTER_FDIR,
                                   RTE_ETH_FILTER_SET, &fi);
     if (ret != 0) {
-      LOG_WARN("Failed to set fdir fields. This could be survivable.\n");
+      LOG_WARN("Failed to set flow director fields. Could be survivable...\n");
     }
   }
 
