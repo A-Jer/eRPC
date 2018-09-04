@@ -38,6 +38,7 @@ static std::string mac_to_string(const uint8_t* mac) {
   return ret.str();
 }
 
+/// Get the network-byte-order IPv4 address from a human-readable IP string
 static uint32_t ipv4_from_str(const char* ip) {
   uint32_t addr;
   int ret = inet_pton(AF_INET, ip, &addr);
@@ -45,6 +46,7 @@ static uint32_t ipv4_from_str(const char* ip) {
   return addr;
 }
 
+/// Convert a network-byte-order IPv4 address to a human-readable IP string
 static std::string ipv4_to_string(uint32_t ipv4_addr) {
   char str[INET_ADDRSTRLEN];
   const char* ret = inet_ntop(AF_INET, &ipv4_addr, str, sizeof(str));
@@ -53,9 +55,9 @@ static std::string ipv4_to_string(uint32_t ipv4_addr) {
   return str;
 }
 
-/// eRPC session endpoint routing info for Ethernet-based transports. This
-/// must be smaller than kMaxRoutingInfoSize, but a static assert would cause
-/// a circular dependency.
+/// eRPC session endpoint routing info for Ethernet-based transports. The MAC
+/// address is in the byte order retrived from the driver. The IPv4 address and
+/// UDP port are in host-byte order.
 struct eth_routing_info_t {
   uint8_t mac[6];
   uint32_t ipv4_addr;
@@ -68,6 +70,8 @@ struct eth_routing_info_t {
 
     return std::string(ret.str());
   }
+  // This must be smaller than Transport::kMaxRoutingInfoSize, but a static
+  // assert here causes a circular dependency.
 };
 
 struct eth_hdr_t {
@@ -148,8 +152,8 @@ static void gen_eth_header(eth_hdr_t* eth_header, const uint8_t* src_mac,
   eth_header->eth_type = htons(kIPEtherType);
 }
 
-/// Format the IPv4 header for a UDP packet. Note that \p data_size is the
-/// payload size in the UDP packet.
+/// Format the IPv4 header for a UDP packet. All value arguments are in
+/// host-byte order. \p data_size is the data payload size in the UDP packet.
 static void gen_ipv4_header(ipv4_hdr_t* ipv4_hdr, uint32_t src_ip,
                             uint32_t dst_ip, uint16_t data_size) {
   ipv4_hdr->version = 4;
@@ -161,13 +165,13 @@ static void gen_ipv4_header(ipv4_hdr_t* ipv4_hdr, uint32_t src_ip,
   ipv4_hdr->frag_off = htons(0);
   ipv4_hdr->ttl = 128;
   ipv4_hdr->protocol = kIPHdrProtocol;
-  ipv4_hdr->src_ip = src_ip;
-  ipv4_hdr->dst_ip = dst_ip;
+  ipv4_hdr->src_ip = htonl(src_ip);
+  ipv4_hdr->dst_ip = htonl(dst_ip);
   ipv4_hdr->check = 0;
 }
 
-/// Format the UDP header for a UDP packet. Note that \p data_size is the
-/// payload size in the UDP packet.
+/// Format the UDP header for a UDP packet. All value arguments are in host-byte
+/// order. \p data_size is the data payload size in the UDP packet.
 static void gen_udp_header(udp_hdr_t* udp_hdr, uint16_t src_port,
                            uint16_t dst_port, uint16_t data_size) {
   udp_hdr->src_port = htons(src_port);
@@ -176,7 +180,7 @@ static void gen_udp_header(udp_hdr_t* udp_hdr, uint16_t src_port,
   udp_hdr->check = 0;
 }
 
-/// Return the IPv4 address of a kernel-visible interface
+/// Return the IPv4 address of a kernel-visible interface in host-byte order
 static uint32_t get_interface_ipv4_addr(std::string interface) {
   struct ifaddrs *ifaddr, *ifa;
   rt_assert(getifaddrs(&ifaddr) == 0);
@@ -187,7 +191,7 @@ static uint32_t get_interface_ipv4_addr(std::string interface) {
     if (strcmp(ifa->ifa_name, interface.c_str()) != 0) continue;
 
     auto sin_addr = reinterpret_cast<sockaddr_in*>(ifa->ifa_addr);
-    ipv4_addr = *reinterpret_cast<uint32_t*>(&sin_addr->sin_addr);
+    ipv4_addr = ntohl(*reinterpret_cast<uint32_t*>(&sin_addr->sin_addr));
   }
 
   freeifaddrs(ifaddr);
